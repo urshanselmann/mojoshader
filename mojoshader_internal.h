@@ -235,11 +235,7 @@ typedef Uint64 uint64;
 #error glspirv profile requires spirv profile. Fix your build.
 #endif
 
-// Microsoft's preprocessor has some quirks. In some ways, it doesn't work
-//  like you'd expect a C preprocessor to function.
-#ifndef MATCH_MICROSOFT_PREPROCESSOR
-#define MATCH_MICROSOFT_PREPROCESSOR 0
-#endif
+
 
 // Other stuff you can disable...
 

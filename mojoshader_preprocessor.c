@@ -1125,6 +1125,13 @@ static void handle_pp_define(Context *ctx)
     if (!add_define(ctx, sym, definition, idents, params))
         goto handle_pp_define_failed;
 
+    /*
+     * We consumed the newline that terminates this directive while
+     * parsing the macro body, but the caller expects to see it in the
+     * token stream so that preprocessor output preserves lines as-is.
+     */
+    pushback(state);
+
     return;
 
 handle_pp_define_failed:
@@ -2021,17 +2028,13 @@ static inline const char *_preprocessor_nexttoken(Preprocessor *_ctx,
         const Conditional *cond = state->conditional_stack;
         const int skipping = ((cond != NULL) && (cond->skipping));
 
-        #if !MATCH_MICROSOFT_PREPROCESSOR
         state->report_whitespace = 1;
         state->report_comments = 1;
-        #endif
 
         const Token token = lexer(state);
 
-        #if !MATCH_MICROSOFT_PREPROCESSOR
         state->report_whitespace = 0;
         state->report_comments = 0;
-        #endif
 
         if (token != TOKEN_IDENTIFIER)
             ctx->recursion_count = 0;
@@ -2149,10 +2152,7 @@ static inline const char *_preprocessor_nexttoken(Preprocessor *_ctx,
                 ctx->parsing_pragma = 0;
             else
             {
-                #if MATCH_MICROSOFT_PREPROCESSOR
-                // preprocessor is line-oriented, nothing else gets newlines.
-                continue;  // get the next thing.
-                #endif
+                /* keep newline */
             } // else
         } // else if
 
@@ -2194,22 +2194,9 @@ const char *preprocessor_sourcepos(Preprocessor *_ctx, unsigned int *pos)
 
 static void indent_buffer(Buffer *buffer, int n, const int newline)
 {
-#if MATCH_MICROSOFT_PREPROCESSOR
-    static char spaces[4] = { ' ', ' ', ' ', ' ' };
-    if (newline)
-    {
-        while (n--)
-        {
-            if (!buffer_append(buffer, spaces, sizeof (spaces)))
-                return;
-        } // while
-    } // if
-    else
-    {
-        if (!buffer_append(buffer, spaces, 1))
-            return;
-    } // else
-#endif
+    (void) buffer;
+    (void) n;
+    (void) newline;
 } // indent_buffer
 
 
@@ -2383,33 +2370,6 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
             }
         } // else if
 
-        #if MATCH_MICROSOFT_PREPROCESSOR
-        // Microsoft's preprocessor is weird.
-        // It ignores newlines, and then inserts its own around certain
-        //  tokens. For example, after a semicolon. This allows HLSL code to
-        //  be mostly readable, instead of a stream of tokens.
-        else if ( (token == ((Token) '}')) || (token == ((Token) ';')) )
-        {
-            if ( (token == ((Token) '}')) && (indent > 0) )
-                indent--;
-
-            indent_buffer(buffer, indent, nl);
-            buffer_append(buffer, tokstr, len);
-            buffer_append(buffer, endline, sizeof (endline));
-
-            isnewline = 1;
-        } // if
-
-        else if (token == ((Token) '{'))
-        {
-            buffer_append(buffer, endline, sizeof (endline));
-            indent_buffer(buffer, indent, 1);
-            buffer_append(buffer, "{", 1);
-            buffer_append(buffer, endline, sizeof (endline));
-            indent++;
-            isnewline = 1;
-        } // else if
-        #endif
 
         else if (token == TOKEN_PREPROCESSING_ERROR)
         {

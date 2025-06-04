@@ -1,0 +1,10 @@
+#pragma foo bar
+#pragma baz qux
+int x;
+
+
+PRAGMAS:
+7-16:foo
+bar
+23-32:baz
+qux
