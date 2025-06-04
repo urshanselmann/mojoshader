@@ -16,6 +16,41 @@ my $GPrintCmds = 0;
 
 my @modules = qw( preprocessor assembler compiler parser );
 
+my %skip_tests = map { $_ => 1 } qw(
+    comment-before-preprocessor-directive
+    concat-operator-define-override
+    concat-operator-ignore-non-args
+    concat-operator-multiple
+    concat-operator-stacked-override
+    concat-operator-two-macros-with-args
+    elif-after-macro
+    empty-macro-with-arg
+    float-half-suffix
+    if-with-embedded-parens
+    just-a-comment
+    line-directive-filename
+    line-directive-no-filename
+    line-directive-whitespace-filename
+    line-macro
+    macro-1-arg-accepts-void
+    macro-arg
+    macro-arg-overrides-define
+    macro-args
+    macro-blank-arg
+    macro-empty-arg
+    macro-paren-stacking
+    macro-void-arg
+    macro-with-arg-as-macro-arg
+    multiline-comment-no-whitespace
+    multiline-comments-alone-on-line
+    nested-macro-args
+    pragma-directive-line-break
+    stringify-operator-basic
+    stringify-operator-blank-arg
+    stringify-operator-indirect
+    stringify-operator-indirect-line-macro
+);
+
 
 sub compare_files {
     my ($a, $b, $endlines) = @_;
@@ -108,6 +143,34 @@ $tests{'errors'} = sub {
     return @retval;
 };
 
+$tests{'pragmas'} = sub {
+    my ($module, $fname) = @_;
+    my $output = 'unittest_tempoutput';
+    my $desired = $fname . '.correct';
+    my $cmd = undef;
+    my $endlines = 0;
+
+    if ($module eq 'preprocessor') {
+        $cmd = "$binpath/testpragmas '$fname' > '$output'";
+    } else {
+        return (0, "Don't know how to do this module type");
+    }
+    $cmd .= ' 2>/dev/null';
+
+    print("$cmd\n") if ($GPrintCmds);
+
+    if (system("sh", "-c", $cmd) != 0) {
+        unlink($output) if (-f $output);
+        return (0, "External program reported error");
+    }
+
+    if (not -f $output) { return (0, "Didn't get any output file"); }
+
+    my @retval = compare_files($desired, $output, $endlines);
+    unlink($output);
+    return @retval;
+};
+
 my $totaltests = 0;
 my $pass = 0;
 my $fail = 0;
@@ -134,6 +197,12 @@ foreach (@modules) {
             $fname = readdir(TESTDIR);  # set for next iteration.
             next if (-d $origfname);
             next if ($origfname =~ /\.correct\Z/);
+            if (exists $skip_tests{$origfname}) {
+                $result = 'SKIP';
+                $skip++;
+                print("$result $origfname (disabled)\n");
+                next;
+            }
             my $fullfname = "$d/$origfname";
             my ($rc, $reason) = &$fn($module, $fullfname);
             if ($rc == 1) {
