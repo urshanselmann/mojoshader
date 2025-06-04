@@ -2091,7 +2091,14 @@ static inline const char *_preprocessor_nexttoken(Preprocessor *_ctx,
 
         // NOTE: Conditionals must be above (skipping) test.
         else if (skipping)
+        {
+#if PRESERVE_PP_OUTPUT_LINES
+            if (token != ((Token) '\n'))
+                continue;  // keep newlines only
+#else
             continue;  // just keep dumping tokens until we get end of block.
+#endif
+        }
 
         else if (token == TOKEN_PP_INCLUDE)
         {
@@ -2154,7 +2161,11 @@ static inline const char *_preprocessor_nexttoken(Preprocessor *_ctx,
             } // else
         } // else if
 
+        #if PRESERVE_PP_OUTPUT_LINES
+        assert(!skipping || token == ((Token) '\n'));
+        #else
         assert(!skipping);
+        #endif
         *_token = token;
         *_len = state->tokenlen;
         return state->token;
@@ -2238,6 +2249,11 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     char *output = NULL;
     int errcount = 0;
     size_t total_bytes = 0;
+#if PRESERVE_PP_OUTPUT_LINES
+    char *linebuf = NULL;
+    size_t linebuf_len = 0;
+    size_t linebuf_cap = 0;
+#endif
 
     // !!! FIXME: what's wrong with ENDLINE_STR?
     #ifdef _WINDOWS
@@ -2265,6 +2281,13 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     if (buffer == NULL)
         goto preprocess_out_of_mem;
 
+#if PRESERVE_PP_OUTPUT_LINES
+    linebuf_cap = 128;
+    linebuf = (char *) m(linebuf_cap, d);
+    if (linebuf == NULL)
+        goto preprocess_out_of_mem;
+#endif
+
     while ((tokstr = preprocessor_nexttoken(pp, &len, &token)) != NULL)
     {
         int isnewline = 0;
@@ -2274,57 +2297,96 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
         if (preprocessor_outofmemory(pp))
             goto preprocess_out_of_mem;
 
-        if (token == ((Token) '\n'))
-        {
-            buffer_append(buffer, endline, sizeof (endline));
-            isnewline = 1;
-        } // else if
-
-        #if MATCH_MICROSOFT_PREPROCESSOR
-        // Microsoft's preprocessor is weird.
-        // It ignores newlines, and then inserts its own around certain
-        //  tokens. For example, after a semicolon. This allows HLSL code to
-        //  be mostly readable, instead of a stream of tokens.
-        else if ( (token == ((Token) '}')) || (token == ((Token) ';')) )
-        {
-            if ( (token == ((Token) '}')) && (indent > 0) )
-                indent--;
-
-            indent_buffer(buffer, indent, nl);
-            buffer_append(buffer, tokstr, len);
-            buffer_append(buffer, endline, sizeof (endline));
-
-            isnewline = 1;
-        } // if
-
-        else if (token == ((Token) '{'))
-        {
-            buffer_append(buffer, endline, sizeof (endline));
-            indent_buffer(buffer, indent, 1);
-            buffer_append(buffer, "{", 1);
-            buffer_append(buffer, endline, sizeof (endline));
-            indent++;
-            isnewline = 1;
-        } // else if
-        #endif
-
-        else if (token == TOKEN_PREPROCESSING_ERROR)
+        if (token == TOKEN_PREPROCESSING_ERROR)
         {
             unsigned int pos = 0;
             const char *fname = preprocessor_sourcepos(pp, &pos);
             errorlist_add(errors, fname, (int) pos, tokstr);
-        } // else if
-
+        }
         else
         {
-            indent_buffer(buffer, indent, nl);
-            buffer_append(buffer, tokstr, len);
-        } // else
+#if PRESERVE_PP_OUTPUT_LINES
+            if (token == ((Token) '\n'))
+            {
+                while (linebuf_len && linebuf[linebuf_len-1] == ' ')
+                    linebuf_len--;
+                if (linebuf_len > 0)
+                    buffer_append(buffer, linebuf, linebuf_len);
+                linebuf_len = 0;
+                buffer_append(buffer, endline, sizeof (endline));
+                isnewline = 1;
+            }
+            else
+            {
+                if (linebuf_len + len > linebuf_cap)
+                {
+                    size_t newcap = linebuf_cap ? linebuf_cap * 2 : 128;
+                    while (linebuf_len + len > newcap)
+                        newcap *= 2;
+                    char *nb = (char *) m(newcap, d);
+                    if (nb == NULL)
+                        goto preprocess_out_of_mem;
+                    if (linebuf)
+                        memcpy(nb, linebuf, linebuf_len);
+                    f(linebuf, d);
+                    linebuf = nb;
+                    linebuf_cap = newcap;
+                }
+                memcpy(linebuf + linebuf_len, tokstr, len);
+                linebuf_len += len;
+            }
+#else
+            if (token == ((Token) '\n'))
+            {
+                buffer_append(buffer, endline, sizeof (endline));
+                isnewline = 1;
+            }
+            #if MATCH_MICROSOFT_PREPROCESSOR
+            else if ( (token == ((Token) '}')) || (token == ((Token) ';')) )
+            {
+                if ( (token == ((Token) '}')) && (indent > 0) )
+                    indent--;
+
+                indent_buffer(buffer, indent, nl);
+                buffer_append(buffer, tokstr, len);
+                buffer_append(buffer, endline, sizeof (endline));
+
+                isnewline = 1;
+            }
+
+            else if (token == ((Token) '{'))
+            {
+                buffer_append(buffer, endline, sizeof (endline));
+                indent_buffer(buffer, indent, 1);
+                buffer_append(buffer, "{", 1);
+                buffer_append(buffer, endline, sizeof (endline));
+                indent++;
+                isnewline = 1;
+            }
+            #endif
+            else
+            {
+                indent_buffer(buffer, indent, nl);
+                buffer_append(buffer, tokstr, len);
+            }
+#endif
+        }
 
         nl = isnewline;
     } // while
-    
+
     assert(token == TOKEN_EOI);
+
+#if PRESERVE_PP_OUTPUT_LINES
+    if (linebuf_len > 0)
+    {
+        while (linebuf_len && linebuf[linebuf_len-1] == ' ')
+            linebuf_len--;
+        if (linebuf_len > 0)
+            buffer_append(buffer, linebuf, linebuf_len);
+        linebuf_len = 0;
+    }
+#endif
 
     total_bytes = buffer_size(buffer);
     output = buffer_flatten(buffer);
@@ -2356,6 +2418,9 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
 
     errorlist_destroy(errors);
     preprocessor_end(pp);
+    #if PRESERVE_PP_OUTPUT_LINES
+    f(linebuf, d);
+    #endif
     return retval;
 
 preprocess_out_of_mem:
@@ -2366,6 +2431,9 @@ preprocess_out_of_mem:
     buffer_destroy(buffer);
     errorlist_destroy(errors);
     preprocessor_end(pp);
+#if PRESERVE_PP_OUTPUT_LINES
+    f(linebuf, d);
+#endif
     return &out_of_mem_data_preprocessor;
 } // MOJOSHADER_preprocess
 

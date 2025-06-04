@@ -241,6 +241,14 @@ typedef Uint64 uint64;
 #define MATCH_MICROSOFT_PREPROCESSOR 1
 #endif
 
+// When enabled the preprocessor output will contain exactly the same number
+// of newline characters as the input. Any carriage returns or trailing
+// whitespace will be removed and lines from skipped conditional branches will
+// be represented by empty lines in the output.
+#ifndef PRESERVE_PP_OUTPUT_LINES
+#define PRESERVE_PP_OUTPUT_LINES 0
+#endif
+
 // Other stuff you can disable...
 
 #ifdef MOJOSHADER_EFFECT_SUPPORT
