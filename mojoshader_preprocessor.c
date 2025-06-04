@@ -115,7 +115,7 @@ static inline void fail(Context *ctx, const char *reason)
 } // fail
 
 
-#if DEBUG_TOKENIZER
+#if DEBUG_TOKENIZER || defined(_DEBUG)
 void MOJOSHADER_print_debug_token(const char *subsystem, const char *token,
                                   const unsigned int tokenlen,
                                   const Token tokenval)
@@ -862,6 +862,8 @@ static void handle_pp_line(Context *ctx)
         filename = (char *) alloca(state->tokenlen);
         memcpy(filename, state->token, state->tokenlen-1);
         filename[state->tokenlen-1] = '\0';
+        if (state->tokenlen>=2 && filename[state->tokenlen-2] == '"')
+            filename[state->tokenlen-2] = '\0';
         bogus = !require_newline(state);
     } // if
 
@@ -2212,11 +2214,28 @@ static void indent_buffer(Buffer *buffer, int n, const int newline)
 
 
 static const MOJOSHADER_preprocessData out_of_mem_data_preprocessor = {
-    1, &MOJOSHADER_out_of_mem_error, 0, 0, 0, 0, 0
+    1, &MOJOSHADER_out_of_mem_error, 0, 0, 0, 0, 0, 0, 0
 };
 
 
 // public API...
+
+#ifdef _DEBUG
+int g_MOJOSHADER_debug_print_tokens = 0;  // set to 1 to print pragma tokens.
+int g_MOJOSHADER_debug_print_pragma_tokens = 0;  // set to 1 to print pragma tokens.
+
+#define MOJOSHADER_DEBUG_PRINT_TOKENS \
+    if (g_MOJOSHADER_debug_print_tokens) { \
+        MOJOSHADER_print_debug_token("TOKEN", tokstr, len, token); \
+    }
+#define MOJOSHADER_DEBUG_PRINT_PRAGMA_TOKENS \
+    if (g_MOJOSHADER_debug_print_pragma_tokens) { \
+        MOJOSHADER_print_debug_token("TOKEN(PRAGMA)", tokstr, len, token); \
+    }
+#else
+#define MOJOSHADER_DEBUG_PRINT_TOKENS
+#define MOJOSHADER_DEBUG_PRINT_PRAGMA_TOKENS
+#endif
 
 const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
                              const char *source, unsigned int sourcelen,
@@ -2229,6 +2248,7 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     MOJOSHADER_preprocessData *retval = NULL;
     Preprocessor *pp = NULL;
     ErrorList *errors = NULL;
+    PragmaList *pragmas = NULL;
     Buffer *buffer = NULL;
     Token token = TOKEN_UNKNOWN;
     const char *tokstr = NULL;
@@ -2237,10 +2257,11 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     unsigned int len = 0;
     char *output = NULL;
     int errcount = 0;
+    int pragmacount = 0;
     size_t total_bytes = 0;
 
     // !!! FIXME: what's wrong with ENDLINE_STR?
-    #ifdef _WINDOWS
+    #if defined(_WINDOWS) && defined(MOJOSHADER_USE_CRLF_ON_WINDOWS)
     static const char endline[] = { '\r', '\n' };
     #else
     static const char endline[] = { '\n' };
@@ -2261,12 +2282,30 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     if (errors == NULL)
         goto preprocess_out_of_mem;
 
+    pragmas = pragmalist_create(MallocBridge, FreeBridge, pp);
+    if (pragmas == NULL)
+        goto preprocess_out_of_mem;
+
     buffer = buffer_create(4096, MallocBridge, FreeBridge, pp);
     if (buffer == NULL)
         goto preprocess_out_of_mem;
 
+    char pragma_buffer[4096];
+    size_t pragma_maxlen = sizeof (pragma_buffer) - 1;
+    pragma_buffer[pragma_maxlen] = '\0';
+
+    size_t pragma_len = 0;
+    pragma_buffer[pragma_len] = '\0';
+
+    int is_pragma = 0;
+    size_t pragma_start = (size_t)-1;
+    int pragma_parens_depth = 0;
+    int pragma_last_was_separator = 0;
+
     while ((tokstr = preprocessor_nexttoken(pp, &len, &token)) != NULL)
     {
+        MOJOSHADER_DEBUG_PRINT_TOKENS
+
         int isnewline = 0;
 
         assert(token != TOKEN_EOI);
@@ -2274,10 +2313,74 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
         if (preprocessor_outofmemory(pp))
             goto preprocess_out_of_mem;
 
+        if (token == TOKEN_PP_PRAGMA) {
+            is_pragma = 1;
+            pragma_start = (size_t)-1;  // reset pragma position.
+            pragma_len = 0;
+            pragma_buffer[pragma_len] = '\0';  // reset pragma buffer.
+            pragma_parens_depth = 0;
+            pragma_last_was_separator = 0;
+        }
+        else if (is_pragma && pragma_start == (size_t)-1) {
+            pragma_start = (int)buffer_size(buffer);
+        }
+        else if (is_pragma) {
+            MOJOSHADER_DEBUG_PRINT_PRAGMA_TOKENS
+            if (token == ((Token) '(')) {
+                if (pragma_len+1 < pragma_maxlen) {
+                    pragma_buffer[pragma_len++] = '(';
+                } // TODO: handle this better.
+                pragma_parens_depth++;
+                pragma_last_was_separator = 0;
+            }
+            else if (token == ((Token) ')')) {
+                if (pragma_len+1 < pragma_maxlen) {
+                    pragma_buffer[pragma_len++] = ')';
+                } // TODO: handle this better.
+                pragma_parens_depth--;
+                pragma_last_was_separator = 0;
+                if (pragma_parens_depth < 0) {
+                    // TODO: handle this better.
+                    pragma_parens_depth = 0;
+                }
+            } // else if
+            else if (token == ((Token) ' ') && pragma_parens_depth == 0) {
+                if (!pragma_last_was_separator && pragma_len+1 < pragma_maxlen) {
+                    pragma_buffer[pragma_len++] = '\n';
+                    pragma_last_was_separator = 1;
+                } // TODO: handle this better.
+            } // else if
+            else if (token != ((Token) ' ') && token != ((Token) '\n')) {
+                if (pragma_len+len < pragma_maxlen) {
+                    memcpy(pragma_buffer + pragma_len, tokstr, len);
+                    pragma_len += len;
+                    pragma_last_was_separator = 0;
+                } // TODO: handle this better.
+            } // else if
+        }
+
         if (token == ((Token) '\n'))
         {
             buffer_append(buffer, endline, sizeof (endline));
             isnewline = 1;
+            
+            if (is_pragma) {
+                unsigned int pos = 0;
+                const char *fname = preprocessor_sourcepos(pp, &pos);
+                const int end_pos = (int)buffer_size(buffer);
+                const int start_pos = pragma_start != (size_t)-1 ? (int)pragma_start : end_pos;
+                assert(pragma_len <= pragma_maxlen);
+                if (pragma_len > 0 && pragma_buffer[pragma_len-1] == '\n') {
+                    pragma_len--;  // don't include trailing newline.
+                }
+                pragma_buffer[pragma_len] = '\0';  // ensure null-termination.
+                pragmalist_add(pragmas, fname, (int) pos, start_pos, end_pos, pragma_buffer);
+                is_pragma = 0;
+                pragma_len = 0;
+                pragma_buffer[pragma_len] = '\0';  // reset pragma buffer.
+                pragma_parens_depth = 0;
+                pragma_last_was_separator = 0;
+            }
         } // else if
 
         #if MATCH_MICROSOFT_PREPROCESSOR
@@ -2348,6 +2451,15 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
             goto preprocess_out_of_mem;
     } // if
 
+    pragmacount = pragmalist_count(pragmas);
+    if (pragmacount > 0)
+    {
+        retval->pragma_count = pragmacount;
+        retval->pragmas = pragmalist_flatten(pragmas);
+        if (retval->pragmas == NULL)
+            goto preprocess_out_of_mem;
+    } // if
+
     retval->output = output;
     retval->output_len = total_bytes;
     retval->malloc = m;
@@ -2355,6 +2467,7 @@ const MOJOSHADER_preprocessData *MOJOSHADER_preprocess(const char *filename,
     retval->malloc_data = d;
 
     errorlist_destroy(errors);
+    pragmalist_destroy(pragmas);
     preprocessor_end(pp);
     return retval;
 
@@ -2365,6 +2478,7 @@ preprocess_out_of_mem:
     f(output, d);
     buffer_destroy(buffer);
     errorlist_destroy(errors);
+    pragmalist_destroy(pragmas);
     preprocessor_end(pp);
     return &out_of_mem_data_preprocessor;
 } // MOJOSHADER_preprocess
@@ -2388,6 +2502,13 @@ void MOJOSHADER_freePreprocessData(const MOJOSHADER_preprocessData *_data)
         f((void *) data->errors[i].filename, d);
     } // for
     f(data->errors, d);
+
+    for (i = 0; i < data->pragma_count; i++)
+    {
+        f((void *) data->pragmas[i].septok, d);
+        f((void *) data->pragmas[i].filename, d);
+    } // for
+    f(data->pragmas, d);
 
     f(data, d);
 } // MOJOSHADER_freePreprocessData

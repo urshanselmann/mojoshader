@@ -676,6 +676,141 @@ void errorlist_destroy(ErrorList *list)
 } // errorlist_destroy
 
 
+// We chain pragmas as a linked list with a head/tail for easy appending.
+//  These get flattened before passing to the application.
+typedef struct PragmaItem
+{
+    MOJOSHADER_pragma pragma;
+    struct PragmaItem *next;
+} PragmaItem;
+
+struct PragmaList
+{
+    PragmaItem head;
+    PragmaItem *tail;
+    int count;
+    MOJOSHADER_malloc m;
+    MOJOSHADER_free f;
+    void *d;
+};
+
+PragmaList *pragmalist_create(MOJOSHADER_malloc m, MOJOSHADER_free f, void *d)
+{
+    PragmaList *retval = (PragmaList *) m(sizeof (PragmaList), d);
+    if (retval != NULL)
+    {
+        memset(retval, '\0', sizeof (PragmaList));
+        retval->tail = &retval->head;
+        retval->m = m;
+        retval->f = f;
+        retval->d = d;
+    } // if
+
+    return retval;
+} // pragmalist_create
+
+int pragmalist_add(PragmaList *list, const char *_fname,
+                      const int srcpos, int start, int end, const char* _septok)
+{
+    PragmaItem *pragma = (PragmaItem *) list->m(sizeof (PragmaItem), list->d);
+    if (pragma == NULL)
+        return 0;
+
+    char *fname = NULL;
+    if (_fname != NULL)
+    {
+        fname = (char *) list->m(strlen(_fname) + 1, list->d);
+        if (fname == NULL)
+        {
+            list->f(pragma, list->d);
+            return 0;
+        } // if
+        strcpy(fname, _fname);
+    } // if
+
+    char *septok = NULL;
+    if (_septok != NULL)
+    {
+        septok = (char *) list->m(strlen(_septok) + 1, list->d);
+        if (septok == NULL)
+        {
+            list->f(pragma, list->d);
+            list->f(fname, list->d);
+            return 0;
+        } // if
+        strcpy(septok, _septok);
+    } // if
+
+    pragma->pragma.start = start;
+    pragma->pragma.end = end;
+    pragma->pragma.septok = septok;
+    pragma->pragma.filename = fname;
+    pragma->pragma.source_position = srcpos;
+    pragma->next = NULL;
+
+    list->tail->next = pragma;
+    list->tail = pragma;
+
+    list->count++;
+    return 1;
+} // pragmalist_add
+
+
+int pragmalist_count(PragmaList *list)
+{
+    return list->count;
+} // pragmalist_count
+
+
+MOJOSHADER_pragma *pragmalist_flatten(PragmaList *list)
+{
+    if (list->count == 0)
+        return NULL;
+
+    int total = 0;
+    MOJOSHADER_pragma *retval = (MOJOSHADER_pragma *)
+            list->m(sizeof (MOJOSHADER_pragma) * list->count, list->d);
+    if (retval == NULL)
+        return NULL;
+
+    PragmaItem *item = list->head.next;
+    while (item != NULL)
+    {
+        PragmaItem *next = item->next;
+        // reuse the string allocations
+        memcpy(&retval[total], &item->pragma, sizeof (MOJOSHADER_pragma));
+        list->f(item, list->d);
+        item = next;
+        total++;
+    } // while
+
+    assert(total == list->count);
+    list->count = 0;
+    list->head.next = NULL;
+    list->tail = &list->head;
+    return retval;
+} // pragmalist_flatten
+
+void pragmalist_destroy(PragmaList *list)
+{
+    if (list == NULL)
+        return;
+
+    MOJOSHADER_free f = list->f;
+    void *d = list->d;
+    PragmaItem *item = list->head.next;
+    while (item != NULL)
+    {
+        PragmaItem *next = item->next;
+        f((void *) item->pragma.filename, d);
+        f((void *) item->pragma.septok, d);
+        f(item, d);
+        item = next;
+    } // while
+    f(list, d);
+} // pragmalist_destroy
+
+
 Buffer *buffer_create(size_t blksz, MOJOSHADER_malloc m,
                       MOJOSHADER_free f, void *d)
 {

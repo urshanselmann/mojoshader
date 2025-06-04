@@ -381,10 +381,10 @@ typedef struct MOJOSHADER_symbol
 typedef struct MOJOSHADER_error
 {
     /*
-     * Human-readable error, if there is one. Will be NULL if there was no
-     *  error. The string will be UTF-8 encoded, and English only. Most of
-     *  these shouldn't be shown to the end-user anyhow.
-     */
+    * Human-readable error, if there is one. Will be NULL if there was no
+    *  error. The string will be UTF-8 encoded, and English only. Most of
+    *  these shouldn't be shown to the end-user anyhow.
+    */
     const char *error;
 
     /*
@@ -405,6 +405,43 @@ typedef struct MOJOSHADER_error
      */
     int error_position;
 } MOJOSHADER_error;
+
+typedef struct MOJOSHADER_pragma
+{
+    /*
+     * Byte offset into the output, pointing to the first token of the pragma
+     */
+    int start;
+
+    /*
+     * Byte offset into the output, pointing to the last token of the pragma ('\n').
+     */
+    int end;
+
+    /*
+     * Tabulator-separated ('\t') tokens after the pragma directive, as returned by the lexer.
+     * All additional whitespace is stripped.
+    */
+    const char *septok;
+
+    /*
+     * Filename where error happened. This can be NULL if the information
+     *  isn't available.
+     */
+    const char *filename;
+
+    /*
+     * Position of error, if there is one. Will be MOJOSHADER_POSITION_NONE if
+     *  there was no error, MOJOSHADER_POSITION_BEFORE if there was an error
+     *  before processing started, and MOJOSHADER_POSITION_AFTER if there was
+     *  an error during final processing. If >= 0, MOJOSHADER_parse() sets
+     *  this to the byte offset (starting at zero) into the bytecode you
+     *  supplied, and MOJOSHADER_assemble(), MOJOSHADER_parseAst(), and
+     *  MOJOSHADER_compile() sets this to a a line number in the source code
+     *  you supplied (starting at one).
+     */
+    int source_position;
+} MOJOSHADER_pragma;
 
 
 /* !!! FIXME: document me. */
@@ -985,6 +1022,18 @@ typedef struct MOJOSHADER_preprocessData
      *  Will be 0 on error.
      */
     int output_len;
+
+    /*
+     * The number of elements pointed to by (pragmas).
+     */
+    int pragma_count;
+
+    /*
+     * (pragma_count) elements of data that specify pragmas that were found
+     *  during preprocessing. This can be NULL if there were no pragmas or if
+     *  (pragma_count) is zero.
+     */
+    MOJOSHADER_pragma *pragmas;
 
     /*
      * This is the malloc implementation you passed to MOJOSHADER_parse().

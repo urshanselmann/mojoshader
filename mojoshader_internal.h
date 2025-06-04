@@ -238,7 +238,7 @@ typedef Uint64 uint64;
 // Microsoft's preprocessor has some quirks. In some ways, it doesn't work
 //  like you'd expect a C preprocessor to function.
 #ifndef MATCH_MICROSOFT_PREPROCESSOR
-#define MATCH_MICROSOFT_PREPROCESSOR 1
+#define MATCH_MICROSOFT_PREPROCESSOR 0
 #endif
 
 // Other stuff you can disable...
@@ -408,6 +408,16 @@ int errorlist_count(ErrorList *list);
 MOJOSHADER_error *errorlist_flatten(ErrorList *list); // resets the list!
 void errorlist_destroy(ErrorList *list);
 
+
+// Pragma lists...
+
+typedef struct PragmaList PragmaList;
+PragmaList *pragmalist_create(MOJOSHADER_malloc m, MOJOSHADER_free f, void *d);
+int pragmalist_add(PragmaList *list, const char *fname,
+                      const int srcpos, int start, int end, const char* septok);
+int pragmalist_count(PragmaList *list);
+MOJOSHADER_pragma *pragmalist_flatten(PragmaList *list); // resets the list!
+void pragmalist_destroy(PragmaList *list);
 
 
 // Dynamic buffers...
