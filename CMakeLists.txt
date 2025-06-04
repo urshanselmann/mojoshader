@@ -268,6 +268,8 @@ IF(COMPILER_SUPPORT)
     ADD_EXECUTABLE(mojoshader-compiler utils/mojoshader-compiler.c)
     TARGET_LINK_LIBRARIES(mojoshader-compiler mojoshader ${LIBM} ${LOBJC} ${CARBON_FRAMEWORK})
 ENDIF(COMPILER_SUPPORT)
+ADD_EXECUTABLE(testpragmas utils/testpragmas.c)
+TARGET_LINK_LIBRARIES(testpragmas mojoshader ${LIBM} ${LOBJC} ${CARBON_FRAMEWORK})
 
 # Unit tests...
 IF(COMPILER_SUPPORT)
